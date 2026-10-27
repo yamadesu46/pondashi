@@ -88,17 +88,24 @@ function showSettings(pad) {
   if (busy) return;
   selectedId = pad.id; selectedColor = pad.color;
   $('settings-title').textContent = `ボタン ${String(pads.indexOf(pad) + 1).padStart(2, '0')} の設定`;
-  $('pad-volume').value = Math.round((pad.volume ?? 1)*100); $('pad-volume-label').value = `${$('pad-volume').value}%`; $('pad-repeat').checked = pad.repeat ?? false;
+  $('pad-volume').value = Math.round((pad.volume ?? 1)*100); updatePadVolumeLabel(); $('pad-repeat').checked = pad.repeat ?? false;
   $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode;
   $('audio-file').value = ''; $('filename').textContent = pad.filename || 'ファイル未設定';
   renderColors(); $('settings').showModal();
 }
 function renderColors() { $('colors').innerHTML = palette.map((c, i) => `<button type="button" class="swatch ${c === selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="カラー ${i + 1}" aria-pressed="${c === selectedColor}"></button>`).join(''); }
-$('pad-volume').oninput = () => { $('pad-volume-label').value = `${$('pad-volume').value}%`; };
+function updatePadVolumeLabel() { $('pad-volume-label').textContent = `${$('pad-volume').value}%`; }
+$('pad-volume').addEventListener('input', updatePadVolumeLabel);
+$('pad-volume').addEventListener('change', updatePadVolumeLabel);
 $('colors').onclick = e => { const c = e.target.closest('[data-color]'); if (c) { selectedColor = c.dataset.color; renderColors(); } };
 $('close-settings').onclick = () => { if (!busy) $('settings').close(); };
 $('settings').addEventListener('cancel', e => { if (busy) e.preventDefault(); });
-$('audio-file').onchange = () => { $('filename').textContent = $('audio-file').files[0]?.name || pads.find(p => p.id === selectedId)?.filename || 'ファイル未設定'; };
+const nameFromFile = file => (file.name.replace(/\.[^.]+$/, '') || file.name).slice(0,60);
+$('audio-file').onchange = () => {
+  const file = $('audio-file').files[0];
+  $('filename').textContent = file?.name || pads.find(p => p.id === selectedId)?.filename || 'ファイル未設定';
+  if (file) $('pad-name').value = nameFromFile(file);
+};
 $('settings-form').onsubmit = async e => {
   e.preventDefault(); if (busy) return;
   busy = true; const submit = e.submitter; submit.disabled = true;
@@ -149,7 +156,7 @@ for (const event of ['dragover','dragleave','drop']) $('pads').addEventListener(
   if (event !== 'drop' || busy) return;
   const file = e.dataTransfer.files[0]; if (!file) return;
   busy = true;
-  try { const buffer = await decode(file); const pad = pads.find(p => p.id === el.dataset.id); const next = {...pad, file, buffer, filename:file.name, name:file.name.replace(/\.[^.]+$/, '')}; const updated = pads.map(p => p.id === pad.id ? next : p); await persist(updated); engine?.stop(pad.id); pads = updated; render(); toast('音声をセットしました'); }
+  try { const buffer = await decode(file); const pad = pads.find(p => p.id === el.dataset.id); const next = {...pad, file, buffer, filename:file.name, name:nameFromFile(file)}; const updated = pads.map(p => p.id === pad.id ? next : p); await persist(updated); engine?.stop(pad.id); pads = updated; render(); toast('音声をセットしました'); }
   catch(err) { toast(`セットできませんでした: ${err.message}`); } finally { busy = false; }
 });
 $('help').onclick = () => $('help-dialog').showModal(); $('close-help').onclick = () => $('help-dialog').close();
