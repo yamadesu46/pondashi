@@ -88,12 +88,13 @@ function showSettings(pad) {
   if (busy) return;
   selectedId = pad.id; selectedColor = pad.color;
   $('settings-title').textContent = `ボタン ${String(pads.indexOf(pad) + 1).padStart(2, '0')} の設定`;
-  $('pad-volume').value = Math.round((pad.volume ?? 1)*100); $('pad-repeat').checked = pad.repeat ?? false;
+  $('pad-volume').value = Math.round((pad.volume ?? 1)*100); $('pad-volume-label').value = `${$('pad-volume').value}%`; $('pad-repeat').checked = pad.repeat ?? false;
   $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode;
   $('audio-file').value = ''; $('filename').textContent = pad.filename || 'ファイル未設定';
   renderColors(); $('settings').showModal();
 }
 function renderColors() { $('colors').innerHTML = palette.map((c, i) => `<button type="button" class="swatch ${c === selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="カラー ${i + 1}" aria-pressed="${c === selectedColor}"></button>`).join(''); }
+$('pad-volume').oninput = () => { $('pad-volume-label').value = `${$('pad-volume').value}%`; };
 $('colors').onclick = e => { const c = e.target.closest('[data-color]'); if (c) { selectedColor = c.dataset.color; renderColors(); } };
 $('close-settings').onclick = () => { if (!busy) $('settings').close(); };
 $('settings').addEventListener('cancel', e => { if (busy) e.preventDefault(); });
