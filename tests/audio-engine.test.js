@@ -68,3 +68,30 @@ test('global fade stops every voice including loops and cancels pending starts',
   for (const s of c.sources) s.onended();
   assert.equal(e.active.size,0);
 });
+test('crossfade replaces every active sound with simultaneous matched gain ramps',async()=>{
+  const c=context(), e=new AudioEngine(c);
+  await e.toggle(pad('board-a'));await e.toggle(pad('board-b',{repeat:true,volume:0.3}));
+  c.currentTime=1;
+  await e.toggle(pad('new',{mode:'crossfade',crossfade:3,fadeIn:0,volume:0.6}));
+  assert.equal(e.active.size,3);
+  for (const id of ['board-a','board-b']) {
+    const v=e.active.get(id);assert.equal(v.source.stopTime,4);
+    assert.deepEqual(v.gain.gain.events.slice(-2),[['set',1,1],['ramp',0,4]]);
+  }
+  const next=e.active.get('new');assert.deepEqual(next.gain.gain.events,[['set',0,1],['ramp',1,4]]);
+  assert.equal(next.volume.gain.value,0.6);
+});
+test('crossfade retimes an existing fade from its current level without a gain jump',async()=>{
+  const c=context(), e=new AudioEngine(c);await e.toggle(pad('old'));
+  e.stop('old',10);c.currentTime=5;
+  await e.toggle(pad('next',{mode:'crossfade',crossfade:2}));
+  assert.deepEqual(e.active.get('old').gain.gain.events.slice(-3),[['cancel',5],['set',0.5,5],['ramp',0,7]]);
+  assert.equal(c.sources[0].stopTime,7);
+});
+test('crossfade from a fading-in sound and immediate cut during crossfade work',async()=>{
+  const c=context(), e=new AudioEngine(c);await e.toggle(pad('old',{fadeIn:4}));c.currentTime=1;
+  await e.toggle(pad('next',{mode:'crossfade',crossfade:2}));
+  assert.deepEqual(e.active.get('old').gain.gain.events.at(-2),['set',0.25,1]);
+  await e.toggle(pad('cut',{mode:'interrupt'}));assert.deepEqual([...e.active.keys()],['cut']);
+  assert.equal(c.sources[0].stopTime,0);assert.equal(c.sources[1].stopTime,0);
+});

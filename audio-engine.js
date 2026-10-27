@@ -14,7 +14,9 @@ export class AudioEngine {
     await this.context.resume();
     if (generation !== this.generation) return;
     if (this.active.has(pad.id)) { this.stop(pad.id, pad.fadeOut); return; }
+    const crossfade = pad.mode === 'crossfade' ? Math.min(pad.crossfade ?? 2, pad.repeat ? Infinity : pad.buffer.duration) : null;
     if (pad.mode === 'interrupt') this.stopAll();
+    else if (crossfade !== null) this.stopAll(crossfade, true);
     const source = this.context.createBufferSource();
     const gain = this.context.createGain();
     const volume = this.context.createGain();
@@ -25,7 +27,7 @@ export class AudioEngine {
     source.connect(gain);
     gain.connect(volume);
     volume.connect(this.master);
-    const fade = Math.min(pad.fadeIn, pad.buffer.duration);
+    const fade = crossfade ?? Math.min(pad.fadeIn, pad.buffer.duration);
     gain.gain.setValueAtTime(fade > 0 ? 0 : 1, now);
     if (fade > 0) gain.gain.linearRampToValueAtTime(1, now + fade);
     const voice = { source, gain, volume, start: now, fadeIn: fade, duration: pad.buffer.duration, stopping: false };
@@ -37,10 +39,10 @@ export class AudioEngine {
     source.start();
     this.onChange();
   }
-  stop(id, fade = 0) {
+  stop(id, fade = 0, retime = false) {
     const voice = this.active.get(id);
     if (!voice) return;
-    if (voice.stopping && fade > 0) return;
+    if (voice.stopping && fade > 0 && !retime) return;
     const now = this.context.currentTime;
     if (fade <= 0) {
       voice.source.stop();
@@ -48,11 +50,14 @@ export class AudioEngine {
       this.onChange();
       return;
     }
-    const current = voice.fadeIn ? Math.min(1, (now - voice.start) / voice.fadeIn) : 1;
+    const current = voice.stopping
+      ? voice.stopFrom * Math.max(0, 1 - (now - voice.stopStart) / voice.stopFade)
+      : voice.fadeIn ? Math.min(1, (now - voice.start) / voice.fadeIn) : 1;
     voice.gain.gain.cancelScheduledValues(now);
     voice.gain.gain.setValueAtTime(current, now);
     voice.gain.gain.linearRampToValueAtTime(0, now + fade);
     voice.stopping = true;
+    voice.stopFrom = current; voice.stopStart = now; voice.stopFade = fade;
     voice.source.stop(now + fade);
     this.onChange();
   }
@@ -62,8 +67,8 @@ export class AudioEngine {
     voice.volume.gain.setValueAtTime(pad.volume ?? 1, this.context.currentTime);
     voice.source.loop = pad.repeat ?? false;
   }
-  stopAll(fade = 0) {
+  stopAll(fade = 0, retime = false) {
     this.generation++;
-    for (const id of [...this.active.keys()]) this.stop(id, fade);
+    for (const id of [...this.active.keys()]) this.stop(id, fade, retime);
   }
 }

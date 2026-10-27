@@ -1,7 +1,7 @@
-import { AudioEngine } from './audio-engine.js';
+import { AudioEngine } from './audio-engine.js?v=6';
 const $ = (id) => document.getElementById(id);
 const palette = ['#b8ee83', '#8fc8f4', '#e4b3ed', '#f0c680', '#8ed9c9', '#ef9eac'];
-const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
+const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', crossfade: 2, volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
 let boards = [], boardId, stopFade = 0;
 let pads = [], db, engine, selectedId, selectedColor, toastTimer, busy = false;
 function settingsStatus(message, error = false) { $('settings-status').textContent = message; $('settings-status').classList.toggle('error', error); }
@@ -60,7 +60,7 @@ function time(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor
 function render() {
   renderTabs();
   $('count').textContent = `${pads.filter(p => p.file).length} / ${pads.length}`;
-  $('pads').innerHTML = pads.map((pad, i) => `<article class="pad ${pad.file ? 'loaded' : 'empty'}" data-id="${pad.id}" style="--accent:${pad.color}">${pad.file ? `<button class="pad-main" aria-label="${escapeHTML(pad.name)}を再生" aria-pressed="false"><span class="pad-top"><span>PAD ${String(i + 1).padStart(2,'0')}</span><span class="duration">${pad.buffer ? time(pad.buffer.duration) : 'AUDIO'}</span></span><span class="play-symbol">▶</span><span class="pad-name">${escapeHTML(pad.name)}</span><span class="pad-detail"><span class="state">再生する</span><span>· ${pad.mode === 'interrupt' ? '割り込み' : '重ねる'}</span></span></button><div class="pad-bottom"><span>${Math.round((pad.volume ?? 1)*100)}%${pad.repeat ? ' · ↻' : ''} · IN ${pad.fadeIn.toFixed(1)}s / OUT ${pad.fadeOut.toFixed(1)}s</span><button class="settings-button" aria-label="${escapeHTML(pad.name)}の設定">⚙ 設定</button></div><div class="progress"></div>` : `<button class="pad-main" aria-label="ボタン${i + 1}に音声を追加"><span class="pad-top">PAD ${String(i + 1).padStart(2,'0')}</span><span class="plus">＋</span><span class="empty-label">音声をセット</span><span class="empty-caption">クリック または ドロップ</span></button>`}</article>`).join('');
+  $('pads').innerHTML = pads.map((pad, i) => `<article class="pad ${pad.file ? 'loaded' : 'empty'}" data-id="${pad.id}" style="--accent:${pad.color}">${pad.file ? `<button class="pad-main" aria-label="${escapeHTML(pad.name)}を再生" aria-pressed="false"><span class="pad-top"><span>PAD ${String(i + 1).padStart(2,'0')}</span><span class="duration">${pad.buffer ? time(pad.buffer.duration) : 'AUDIO'}</span></span><span class="play-symbol">▶</span><span class="pad-name">${escapeHTML(pad.name)}</span><span class="pad-detail"><span class="state">再生する</span><span>· ${pad.mode === 'interrupt' ? '即停止で割り込み' : pad.mode === 'crossfade' ? 'クロスフェードで割り込み' : '重ねる'}</span></span></button><div class="pad-bottom"><span>${Math.round((pad.volume ?? 1)*100)}%${pad.repeat ? ' · ↻' : ''} · IN ${pad.fadeIn.toFixed(1)}s / OUT ${pad.fadeOut.toFixed(1)}s</span><button class="settings-button" aria-label="${escapeHTML(pad.name)}の設定">⚙ 設定</button></div><div class="progress"></div>` : `<button class="pad-main" aria-label="ボタン${i + 1}に音声を追加"><span class="pad-top">PAD ${String(i + 1).padStart(2,'0')}</span><span class="plus">＋</span><span class="empty-label">音声をセット</span><span class="empty-caption">クリック または ドロップ</span></button>`}</article>`).join('');
   updatePlaying();
 }
 function updatePlaying() {
@@ -91,12 +91,14 @@ function showSettings(pad) {
   selectedId = pad.id; selectedColor = pad.color;
   $('settings-title').textContent = `ボタン ${String(pads.indexOf(pad) + 1).padStart(2, '0')} の設定`;
   $('pad-volume').value = Math.round((pad.volume ?? 1)*100); updatePadVolumeLabel(); $('pad-repeat').checked = pad.repeat ?? false;
-  $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode;
+  $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode; $('crossfade').value = pad.crossfade ?? 2; updateCrossfadeField();
   $('audio-file').value = ''; $('filename').textContent = pad.filename || 'ファイル未設定';
   $('settings-status').textContent = ''; $('settings-status').classList.remove('error');
   renderColors(); $('preview-audio').textContent = '▶ 試聴する'; $('settings').showModal();
 }
 function renderColors() { $('colors').innerHTML = palette.map((c, i) => `<button type="button" class="swatch ${c === selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="カラー ${i + 1}" aria-pressed="${c === selectedColor}"></button>`).join(''); }
+function updateCrossfadeField() { $('crossfade-field').hidden = $('mode').value !== 'crossfade'; $('crossfade').disabled = $('mode').value !== 'crossfade'; }
+$('mode').onchange = updateCrossfadeField;
 function updatePadVolumeLabel() { $('pad-volume-label').textContent = `${$('pad-volume').value}%`; }
 function previewVolume() {
   updatePadVolumeLabel();
@@ -153,7 +155,7 @@ $('settings-form').onsubmit = async e => {
   settingsStatus('音声と設定を保存しています…');
   try {
     const pad = pads.find(p => p.id === selectedId), file = $('audio-file').files[0];
-    const next = { ...pad, name: $('pad-name').value.trim() || pad.name, fadeIn: Number($('fade-in').value), fadeOut: Number($('fade-out').value), mode: $('mode').value, volume: Number($('pad-volume').value)/100, repeat: $('pad-repeat').checked, color: selectedColor };
+    const next = { ...pad, name: $('pad-name').value.trim() || pad.name, fadeIn: Number($('fade-in').value), fadeOut: Number($('fade-out').value), mode: $('mode').value, crossfade:Number($('crossfade').value), volume: Number($('pad-volume').value)/100, repeat: $('pad-repeat').checked, color: selectedColor };
     if (file) { next.buffer = await decode(file); next.file = file; next.filename = file.name; }
     const updated = pads.map(p => p.id === selectedId ? next : p);
     await persist(updated); if (file) engine?.stop(pad.id); pads = updated; engine?.updatePad(next);
@@ -218,15 +220,16 @@ $('import-file').onchange = async () => {
     if (data.format !== 'pondashi' || data.version !== 1 || !Array.isArray(data.pads) || !data.pads.length || data.pads.length > 200) throw new Error('バックアップの形式が正しくありません');
     const next = [];
     for (const p of data.pads) {
-      if (typeof p.name !== 'string' || !['overlap','interrupt'].includes(p.mode) || ![p.fadeIn,p.fadeOut].every(n => Number.isFinite(n) && n >= 0 && n <= 60) || !palette.includes(p.color)) throw new Error('設定値が正しくありません');
+      if (typeof p.name !== 'string' || !['overlap','interrupt','crossfade'].includes(p.mode) || ![p.fadeIn,p.fadeOut].every(n => Number.isFinite(n) && n >= 0 && n <= 60) || !palette.includes(p.color)) throw new Error('設定値が正しくありません');
       if ((p.volume !== undefined && (!Number.isFinite(p.volume) || p.volume < 0 || p.volume > 1)) || (p.repeat !== undefined && typeof p.repeat !== 'boolean')) throw new Error('音量・リピート設定が正しくありません');
+      if (p.crossfade !== undefined && (!Number.isFinite(p.crossfade) || p.crossfade < 0.1 || p.crossfade > 60)) throw new Error('クロスフェード秒数が正しくありません');
       let audioFile = null, buffer;
       if (p.audio) {
         if (typeof p.audio !== 'string' || !/^data:[^,]*;base64,/.test(p.audio)) throw new Error('音声データが正しくありません');
         const [header,body] = p.audio.split(','); const bytes = Uint8Array.from(atob(body), c => c.charCodeAt(0));
         audioFile = new Blob([bytes],{type:header.slice(5).split(';')[0]}); buffer = await decode(audioFile);
       }
-      next.push({id:crypto.randomUUID(), name:p.name.slice(0,60), fadeIn:p.fadeIn, fadeOut:p.fadeOut, mode:p.mode, volume:p.volume ?? 1, repeat:p.repeat ?? false, color:p.color, filename:typeof p.filename === 'string' ? p.filename : '', file:audioFile, buffer});
+      next.push({id:crypto.randomUUID(), name:p.name.slice(0,60), fadeIn:p.fadeIn, fadeOut:p.fadeOut, mode:p.mode, crossfade:p.crossfade ?? 2, volume:p.volume ?? 1, repeat:p.repeat ?? false, color:p.color, filename:typeof p.filename === 'string' ? p.filename : '', file:audioFile, buffer});
     }
     await persist(next); stopAll(); pads = next; render(); toast('バックアップを読み込みました');
   } catch(err) { toast(`読み込めませんでした: ${err.message}`); }
