@@ -4,7 +4,8 @@ const palette = ['#b8ee83', '#8fc8f4', '#e4b3ed', '#f0c680', '#8ed9c9', '#ef9eac
 const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
 let boards = [], boardId, stopFade = 0;
 let pads = [], db, engine, selectedId, selectedColor, toastTimer, busy = false;
-function toast(message) { $('toast').textContent = message; $('toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 4500); }
+function settingsStatus(message, error = false) { $('settings-status').textContent = message; $('settings-status').classList.toggle('error', error); }
+function toast(message) { if ($('settings').open) settingsStatus(message, true); $('toast').textContent = message; $('toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 4500); }
 function openDB() { return new Promise((resolve, reject) => { const req = indexedDB.open('pondashi', 1); req.onupgradeneeded = () => req.result.createObjectStore('board'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
 function readStored(key) { return new Promise((resolve, reject) => { const req = db.transaction('board').objectStore('board').get(key); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
 async function persist(nextPads = pads, nextBoards = boards, nextId = boardId, nextFade = stopFade) {
@@ -92,6 +93,7 @@ function showSettings(pad) {
   $('pad-volume').value = Math.round((pad.volume ?? 1)*100); updatePadVolumeLabel(); $('pad-repeat').checked = pad.repeat ?? false;
   $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode;
   $('audio-file').value = ''; $('filename').textContent = pad.filename || 'ファイル未設定';
+  $('settings-status').textContent = ''; $('settings-status').classList.remove('error');
   renderColors(); $('preview-audio').textContent = '▶ 試聴する'; $('settings').showModal();
 }
 function renderColors() { $('colors').innerHTML = palette.map((c, i) => `<button type="button" class="swatch ${c === selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="カラー ${i + 1}" aria-pressed="${c === selectedColor}"></button>`).join(''); }
@@ -119,17 +121,19 @@ $('settings').addEventListener('close', () => {
 $('preview-audio').onclick = async () => {
   if (busy) return;
   const pad = pads.find(p => p.id === selectedId), id = `preview-${selectedId}`;
-  const audio = getEngine();
-  if (audio.active.has(id)) { audio.stop(id); return; }
+  if (engine?.active.has(id)) { engine.stop(id); settingsStatus('試聴を停止しました'); return; }
   const file = $('audio-file').files[0] || pad.file;
   if (!file) { toast('先に音声ファイルを選んでください'); return; }
   const ticket = ++playRequest;
   try {
+    const audio = getEngine();
+    settingsStatus('試聴を準備しています…');
     await audio.context.resume();
     const buffer = $('audio-file').files[0] ? await decode(file) : pad.buffer || await decode(file);
     if (ticket !== playRequest || !$('settings').open) return;
     audio.stop(pad.id);
     await audio.toggle({...pad, id, buffer, volume:Number($('pad-volume').value)/100, repeat:$('pad-repeat').checked, mode:'overlap'});
+    settingsStatus('試聴中です。スライダーで音量を調整できます');
   } catch(err) { toast(`試聴できませんでした: ${err.message}`); }
 };
 $('pad-repeat').onchange = () => {
@@ -141,9 +145,12 @@ $('audio-file').onchange = () => {
   $('filename').textContent = file?.name || pads.find(p => p.id === selectedId)?.filename || 'ファイル未設定';
   if (file) $('pad-name').value = nameFromFile(file);
 };
+$('settings-form').addEventListener('invalid', e => { settingsStatus(`${e.target.closest('label')?.textContent.trim() || '入力値'}を確認してください。${e.target.validationMessage}`, true); }, true);
 $('settings-form').onsubmit = async e => {
   e.preventDefault(); if (busy) return;
-  busy = true; const submit = e.submitter; submit.disabled = true;
+  const submit = $('save-settings');
+  busy = true; submit.disabled = true; submit.textContent = '保存中…';
+  settingsStatus('音声と設定を保存しています…');
   try {
     const pad = pads.find(p => p.id === selectedId), file = $('audio-file').files[0];
     const next = { ...pad, name: $('pad-name').value.trim() || pad.name, fadeIn: Number($('fade-in').value), fadeOut: Number($('fade-out').value), mode: $('mode').value, volume: Number($('pad-volume').value)/100, repeat: $('pad-repeat').checked, color: selectedColor };
@@ -152,7 +159,7 @@ $('settings-form').onsubmit = async e => {
     await persist(updated); if (file) engine?.stop(pad.id); pads = updated; engine?.updatePad(next);
     render(); $('settings').close(); toast('設定を保存しました');
   } catch (err) { toast(`保存できませんでした: ${err.message}`); }
-  finally { busy = false; submit.disabled = false; }
+  finally { busy = false; submit.disabled = false; submit.textContent = '設定を保存'; }
 };
 $('clear-pad').onclick = async () => {
   if (busy || !confirm('このボタンの音声と設定を解除しますか？')) return;
