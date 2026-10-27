@@ -47,3 +47,24 @@ test('fade in is capped to clip duration; volume is independent', async () => {
   assert.deepEqual(e.active.get('a').gain.gain.events,[['set',0,0],['ramp',1,10]]);
   e.setVolume(0.3); assert.deepEqual(e.master.gain.events.at(-1),['set',0.3,0]);
 });
+test('pad volume and repeat are independent and update during playback', async () => {
+  const c=context(), e=new AudioEngine(c);
+  await e.toggle(pad('a',{volume:0.25,repeat:true,fadeIn:2}));
+  const v=e.active.get('a');
+  assert.equal(v.source.loop,true); assert.equal(v.volume.gain.value,0.25);
+  e.updatePad(pad('a',{volume:0,repeat:false}));
+  assert.equal(v.source.loop,false);
+  assert.deepEqual(v.volume.gain.events.at(-1),['set',0,0]);
+  assert.deepEqual(v.gain.gain.events,[['set',0,0],['ramp',1,2]]);
+});
+test('global fade stops every voice including loops and cancels pending starts', async () => {
+  const c=context(), e=new AudioEngine(c);
+  await e.toggle(pad('a',{repeat:true})); await e.toggle(pad('b',{volume:0.4}));
+  c.currentTime=3; e.stopAll(2);
+  for (const v of e.active.values()) {
+    assert.equal(v.stopping,true); assert.equal(v.source.stopTime,5);
+    assert.deepEqual(v.gain.gain.events.at(-1),['ramp',0,5]);
+  }
+  for (const s of c.sources) s.onended();
+  assert.equal(e.active.size,0);
+});

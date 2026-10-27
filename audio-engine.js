@@ -17,17 +17,21 @@ export class AudioEngine {
     if (pad.mode === 'interrupt') this.stopAll();
     const source = this.context.createBufferSource();
     const gain = this.context.createGain();
+    const volume = this.context.createGain();
+    volume.gain.value = pad.volume ?? 1;
+    source.loop = pad.repeat ?? false;
     const now = this.context.currentTime;
     source.buffer = pad.buffer;
     source.connect(gain);
-    gain.connect(this.master);
+    gain.connect(volume);
+    volume.connect(this.master);
     const fade = Math.min(pad.fadeIn, pad.buffer.duration);
     gain.gain.setValueAtTime(fade > 0 ? 0 : 1, now);
     if (fade > 0) gain.gain.linearRampToValueAtTime(1, now + fade);
-    const voice = { source, gain, start: now, fadeIn: fade, duration: pad.buffer.duration, stopping: false };
+    const voice = { source, gain, volume, start: now, fadeIn: fade, duration: pad.buffer.duration, stopping: false };
     this.active.set(pad.id, voice);
     source.onended = () => {
-      source.disconnect(); gain.disconnect();
+      source.disconnect(); gain.disconnect(); volume.disconnect();
       if (this.active.get(pad.id) === voice) { this.active.delete(pad.id); this.onChange(); }
     };
     source.start();
@@ -52,8 +56,14 @@ export class AudioEngine {
     voice.source.stop(now + fade);
     this.onChange();
   }
-  stopAll() {
+  updatePad(pad) {
+    const voice = this.active.get(pad.id);
+    if (!voice) return;
+    voice.volume.gain.setValueAtTime(pad.volume ?? 1, this.context.currentTime);
+    voice.source.loop = pad.repeat ?? false;
+  }
+  stopAll(fade = 0) {
     this.generation++;
-    for (const id of [...this.active.keys()]) this.stop(id, 0);
+    for (const id of [...this.active.keys()]) this.stop(id, fade);
   }
 }
