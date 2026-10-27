@@ -64,6 +64,7 @@ function render() {
 }
 function updatePlaying() {
   const active = engine?.active || new Map();
+  $('preview-audio').textContent = active.has(`preview-${selectedId}`) ? '■ 試聴を停止' : '▶ 試聴する';
   $('playing-count').textContent = active.size ? `${active.size} 音声を再生中` : '再生待機中';
   document.querySelectorAll('.pad').forEach(el => {
     const voice = active.get(el.dataset.id), pad = pads.find(p => p.id === el.dataset.id);
@@ -91,16 +92,50 @@ function showSettings(pad) {
   $('pad-volume').value = Math.round((pad.volume ?? 1)*100); updatePadVolumeLabel(); $('pad-repeat').checked = pad.repeat ?? false;
   $('pad-name').value = pad.name; $('fade-in').value = pad.fadeIn; $('fade-out').value = pad.fadeOut; $('mode').value = pad.mode;
   $('audio-file').value = ''; $('filename').textContent = pad.filename || 'ファイル未設定';
-  renderColors(); $('settings').showModal();
+  renderColors(); $('preview-audio').textContent = '▶ 試聴する'; $('settings').showModal();
 }
 function renderColors() { $('colors').innerHTML = palette.map((c, i) => `<button type="button" class="swatch ${c === selectedColor ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="カラー ${i + 1}" aria-pressed="${c === selectedColor}"></button>`).join(''); }
 function updatePadVolumeLabel() { $('pad-volume-label').textContent = `${$('pad-volume').value}%`; }
-$('pad-volume').addEventListener('input', updatePadVolumeLabel);
-$('pad-volume').addEventListener('change', updatePadVolumeLabel);
+function previewVolume() {
+  updatePadVolumeLabel();
+  if (!$('settings').open) return;
+  const pad = pads.find(p => p.id === selectedId);
+  if (!pad) return;
+  const volume = Number($('pad-volume').value)/100;
+  engine?.updatePad({...pad, volume});
+  engine?.updatePad({...pad, id:`preview-${pad.id}`, volume, repeat:$('pad-repeat').checked});
+}
+$('pad-volume').addEventListener('input', previewVolume);
+$('pad-volume').addEventListener('change', previewVolume);
 $('colors').onclick = e => { const c = e.target.closest('[data-color]'); if (c) { selectedColor = c.dataset.color; renderColors(); } };
 $('close-settings').onclick = () => { if (!busy) $('settings').close(); };
 $('settings').addEventListener('cancel', e => { if (busy) e.preventDefault(); });
 const nameFromFile = file => (file.name.replace(/\.[^.]+$/, '') || file.name).slice(0,60);
+$('settings').addEventListener('close', () => {
+  playRequest++;
+  engine?.stop(`preview-${selectedId}`);
+  const pad = pads.find(p => p.id === selectedId); if (pad) engine?.updatePad(pad);
+});
+$('preview-audio').onclick = async () => {
+  if (busy) return;
+  const pad = pads.find(p => p.id === selectedId), id = `preview-${selectedId}`;
+  const audio = getEngine();
+  if (audio.active.has(id)) { audio.stop(id); return; }
+  const file = $('audio-file').files[0] || pad.file;
+  if (!file) { toast('先に音声ファイルを選んでください'); return; }
+  const ticket = ++playRequest;
+  try {
+    await audio.context.resume();
+    const buffer = $('audio-file').files[0] ? await decode(file) : pad.buffer || await decode(file);
+    if (ticket !== playRequest || !$('settings').open) return;
+    audio.stop(pad.id);
+    await audio.toggle({...pad, id, buffer, volume:Number($('pad-volume').value)/100, repeat:$('pad-repeat').checked, mode:'overlap'});
+  } catch(err) { toast(`試聴できませんでした: ${err.message}`); }
+};
+$('pad-repeat').onchange = () => {
+  const pad = pads.find(p => p.id === selectedId);
+  if (pad) engine?.updatePad({...pad,id:`preview-${pad.id}`,volume:Number($('pad-volume').value)/100,repeat:$('pad-repeat').checked});
+};
 $('audio-file').onchange = () => {
   const file = $('audio-file').files[0];
   $('filename').textContent = file?.name || pads.find(p => p.id === selectedId)?.filename || 'ファイル未設定';
