@@ -7,3 +7,5 @@
 .volume-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 
 .settings-actions{position:sticky;bottom:-28px;background:#1c2225;padding:12px 0 20px;border-top:1px solid #414d51;z-index:2}.settings-actions .dialog-footer{margin-top:8px;gap:8px;flex-wrap:wrap}.settings-actions .primary,.settings-actions .subtle{padding:12px 14px}.settings-actions .danger-text{padding:12px 0}#settings-status{font-size:12px;line-height:1.7;color:#b8ee83;overflow-wrap:anywhere;margin:0}#settings-status.error{color:#ff9a9f}#settings{scroll-padding-bottom:130px}
+
+.drag-handle{position:absolute;top:43px;right:12px;z-index:1;background:#293035;color:#b5c1c3;border:1px solid #455156;border-radius:5px;padding:7px 9px;font-size:10px;cursor:grab;touch-action:none;user-select:none}.drag-handle:active{cursor:grabbing}.pad.dragging{opacity:.55}.pad.drop-target{outline:2px solid #b8ee83;outline-offset:2px;background:#273329}.pad-main{user-select:none;-webkit-user-drag:none}.pad.dragging .pad-main{cursor:grabbing}

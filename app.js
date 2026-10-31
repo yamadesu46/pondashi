@@ -60,7 +60,7 @@ function time(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor
 function render() {
   renderTabs();
   $('count').textContent = `${pads.filter(p => p.file).length} / ${pads.length}`;
-  $('pads').innerHTML = pads.map((pad, i) => `<article class="pad ${pad.file ? 'loaded' : 'empty'}" data-id="${pad.id}" style="--accent:${pad.color}">${pad.file ? `<button class="pad-main" aria-label="${escapeHTML(pad.name)}を再生" aria-pressed="false"><span class="pad-top"><span>PAD ${String(i + 1).padStart(2,'0')}</span><span class="duration">${pad.buffer ? time(pad.buffer.duration) : 'AUDIO'}</span></span><span class="play-symbol">▶</span><span class="pad-name">${escapeHTML(pad.name)}</span><span class="pad-detail"><span class="state">再生する</span><span>· ${pad.mode === 'interrupt' ? '即停止で割り込み' : pad.mode === 'crossfade' ? 'クロスフェードで割り込み' : '重ねる'}</span></span></button><div class="pad-bottom"><span>${Math.round((pad.volume ?? 1)*100)}%${pad.repeat ? ' · ↻' : ''} · IN ${pad.fadeIn.toFixed(1)}s / OUT ${pad.fadeOut.toFixed(1)}s</span><button class="settings-button" aria-label="${escapeHTML(pad.name)}の設定">⚙ 設定</button></div><div class="progress"></div>` : `<button class="pad-main" aria-label="ボタン${i + 1}に音声を追加"><span class="pad-top">PAD ${String(i + 1).padStart(2,'0')}</span><span class="plus">＋</span><span class="empty-label">音声をセット</span><span class="empty-caption">クリック または ドロップ</span></button>`}</article>`).join('');
+  $('pads').innerHTML = pads.map((pad, i) => `<article class="pad ${pad.file ? 'loaded' : 'empty'}" data-id="${pad.id}" style="--accent:${pad.color}"><button type="button" class="drag-handle" aria-label="${escapeHTML(pad.name)}を移動" title="ドラッグして入れ替え（矢印キーでも移動）">⠿ 移動</button>${pad.file ? `<button class="pad-main" aria-label="${escapeHTML(pad.name)}を再生" aria-pressed="false"><span class="pad-top"><span>PAD ${String(i + 1).padStart(2,'0')}</span><span class="duration">${pad.buffer ? time(pad.buffer.duration) : 'AUDIO'}</span></span><span class="play-symbol">▶</span><span class="pad-name">${escapeHTML(pad.name)}</span><span class="pad-detail"><span class="state">再生する</span><span>· ${pad.mode === 'interrupt' ? '即停止で割り込み' : pad.mode === 'crossfade' ? 'クロスフェードで割り込み' : '重ねる'}</span></span></button><div class="pad-bottom"><span>${Math.round((pad.volume ?? 1)*100)}%${pad.repeat ? ' · ↻' : ''} · IN ${pad.fadeIn.toFixed(1)}s / OUT ${pad.fadeOut.toFixed(1)}s</span><button class="settings-button" aria-label="${escapeHTML(pad.name)}の設定">⚙ 設定</button></div><div class="progress"></div>` : `<button class="pad-main" aria-label="ボタン${i + 1}に音声を追加"><span class="pad-top">PAD ${String(i + 1).padStart(2,'0')}</span><span class="plus">＋</span><span class="empty-label">音声をセット</span><span class="empty-caption">クリック または ドロップ</span></button>`}</article>`).join('');
   updatePlaying();
 }
 function updatePlaying() {
@@ -170,6 +170,7 @@ $('clear-pad').onclick = async () => {
   catch(err) { toast(`解除できませんでした: ${err.message}`); } finally { busy = false; }
 };
 $('pads').onclick = async e => {
+  if (e.target.closest('.drag-handle')) return;
   const el = e.target.closest('.pad'); if (!el || busy) return;
   const pad = pads.find(p => p.id === el.dataset.id);
   if (e.target.closest('.settings-button') || !pad.file) { showSettings(pad); return; }
@@ -194,6 +195,72 @@ $('add').onclick = async () => {
   try { const updated = [...pads, freshPad(pads.length)]; await persist(updated); pads = updated; render(); }
   catch(err) { toast(`追加できませんでした: ${err.message}`); } finally { busy = false; }
 };
+// Pad order changes preserve pad identities, audio buffers, and current playback.
+let padDrag = null, suppressPadClickUntil = 0;
+async function swapPads(sourceId, targetId, focus = false) {
+  if (busy || sourceId === targetId) return;
+  const from = pads.findIndex(p => p.id === sourceId), to = pads.findIndex(p => p.id === targetId);
+  if (from < 0 || to < 0) return;
+  busy = true;
+  try {
+    const updated = [...pads]; [updated[from], updated[to]] = [updated[to], updated[from]];
+    await persist(updated); pads = updated; render();
+    if (focus) [...$('pads').querySelectorAll('.pad')].find(el => el.dataset.id === sourceId)?.querySelector('.drag-handle').focus();
+    toast(`ボタン ${from + 1} と ${to + 1} を入れ替えました`);
+  } catch (err) { toast(`入れ替えできませんでした: ${err.message}`); }
+  finally { busy = false; }
+}
+function clearPadDrag() {
+  const drag = padDrag; padDrag = null;
+  if (drag?.moved) suppressPadClickUntil = performance.now()+400;
+  document.querySelectorAll('.pad.dragging,.pad.drop-target').forEach(el => el.classList.remove('dragging','drop-target'));
+  if (drag?.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+  return drag;
+}
+$('pads').addEventListener('click', e => {
+  if (performance.now() < suppressPadClickUntil) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+$('pads').addEventListener('pointerdown', e => {
+  const handle = e.target.closest('.drag-handle');
+  const main = e.pointerType === 'mouse' && e.target.closest('.pad-main');
+  if (busy || padDrag || e.button !== 0 || (!handle && !main)) return;
+  const target = handle || main;
+  padDrag = {handle:target, pointerId:e.pointerId, sourceId:target.closest('.pad').dataset.id, x:e.clientX, y:e.clientY, moved:false, targetId:null};
+  target.setPointerCapture(e.pointerId);
+});
+$('pads').addEventListener('pointermove', e => {
+  const drag = padDrag; if (!drag || drag.pointerId !== e.pointerId) return;
+  if (!drag.moved && Math.hypot(e.clientX-drag.x,e.clientY-drag.y) < 7) return;
+  drag.moved = true; e.preventDefault();
+  drag.handle.closest('.pad').classList.add('dragging');
+  if (e.clientY < 60) window.scrollBy(0,-15);
+  else if (e.clientY > innerHeight-60) window.scrollBy(0,15);
+  const target = document.elementFromPoint(e.clientX,e.clientY)?.closest('#pads .pad');
+  drag.targetId = target?.dataset.id || null;
+  document.querySelectorAll('.pad.drop-target').forEach(el => el.classList.remove('drop-target'));
+  if (target && drag.targetId !== drag.sourceId) target.classList.add('drop-target');
+});
+$('pads').addEventListener('pointerup', e => {
+  if (!padDrag || padDrag.pointerId !== e.pointerId) return;
+  const drag = clearPadDrag(); if (!drag.moved) return;
+  suppressPadClickUntil = performance.now()+400;
+  if (drag.targetId) swapPads(drag.sourceId,drag.targetId);
+});
+for (const name of ['pointercancel','lostpointercapture']) $('pads').addEventListener(name, e => {
+  if (padDrag?.pointerId === e.pointerId) { if (padDrag.moved) suppressPadClickUntil=performance.now()+400; clearPadDrag(); }
+});
+$('pads').addEventListener('dragstart', e => e.preventDefault());
+$('pads').addEventListener('keydown', e => {
+  if (!e.target.closest('.drag-handle')) return;
+  const columns = getComputedStyle($('pads')).gridTemplateColumns.split(' ').length;
+  const steps = {ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns};
+  if (!(e.key in steps)) return;
+  e.preventDefault(); const id = e.target.closest('.pad').dataset.id;
+  const next = pads.findIndex(p => p.id === id)+steps[e.key];
+  if (next >= 0 && next < pads.length) swapPads(id,pads[next].id,true);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') clearPadDrag(); });
+window.addEventListener('blur', clearPadDrag);
 for (const event of ['dragover','dragleave','drop']) $('pads').addEventListener(event, async e => {
   const el = e.target.closest('.pad'); if (!el) return;
   e.preventDefault(); el.classList.toggle('dragover', event === 'dragover');
