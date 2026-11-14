@@ -1,4 +1,5 @@
 import { AudioEngine } from './audio-engine.js?v=6';
+import { exportSetup, importSetup } from './backup.js?v=8';
 const $ = (id) => document.getElementById(id);
 const palette = ['#b8ee83', '#8fc8f4', '#e4b3ed', '#f0c680', '#8ed9c9', '#ef9eac'];
 const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', crossfade: 2, volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
@@ -10,9 +11,14 @@ function openDB() { return new Promise((resolve, reject) => { const req = indexe
 function readStored(key) { return new Promise((resolve, reject) => { const req = db.transaction('board').objectStore('board').get(key); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
 async function persist(nextPads = pads, nextBoards = boards, nextId = boardId, nextFade = stopFade) {
   if (!db) throw new Error('ブラウザ保存を利用できません');
-  const data = { boards: nextBoards.map(board => ({ ...board, pads: (board.id === boardId ? nextPads : board.pads).map(({ buffer, ...pad }) => pad) })), boardId: nextId, stopFade: nextFade };
-  await new Promise((resolve, reject) => { const tx = db.transaction('board', 'readwrite'); tx.objectStore('board').put(data, 'workspace'); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error); });
+  const data = { boards: nextBoards.map(board => ({ ...board, pads: (board.id === boardId ? nextPads : board.pads).map(({ buffer, ...pad }) => pad) })), boardId: nextId, stopFade: nextFade, master:Number($('master').value) };
+  await writeWorkspace(data);
   const current = boards.find(b => b.id === boardId); if (current) current.pads = nextPads;
+}
+async function writeWorkspace(data) {
+  if (!db) throw new Error('ブラウザ保存を利用できません');
+  const stored = {...data, boards:data.boards.map(b=>({...b,pads:b.pads.map(({buffer,...pad})=>pad)}))};
+  await new Promise((resolve,reject)=>{const tx=db.transaction('board','readwrite');tx.objectStore('board').put(stored,'workspace');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});
 }
 function renderTabs() {
   $('board-tabs').innerHTML = boards.map(b => `<button role="tab" id="tab-${b.id}" aria-controls="pads" aria-selected="${b.id === boardId}" tabindex="${b.id === boardId ? 0 : -1}" data-board="${b.id}">${escapeHTML(b.name)}</button>`).join('');
@@ -271,41 +277,40 @@ for (const event of ['dragover','dragleave','drop']) $('pads').addEventListener(
   catch(err) { toast(`セットできませんでした: ${err.message}`); } finally { busy = false; }
 });
 $('help').onclick = () => $('help-dialog').showModal(); $('close-help').onclick = () => $('help-dialog').close();
-function blobToDataURL(blob) { return new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); }
 $('export').onclick = async () => {
-  if (busy) return; busy = true;
-  try { const data = await Promise.all(pads.map(async ({buffer,file,...pad}) => ({...pad, audio: file ? await blobToDataURL(file) : null}))); const url = URL.createObjectURL(new Blob([JSON.stringify({format:'pondashi',version:1,pads:data})],{type:'application/json'})); const a = document.createElement('a'); a.href=url; a.download=`pondashi-${new Date().toISOString().slice(0,10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('音声を含むバックアップを書き出しました'); }
-  catch(err) { toast(`書き出せませんでした: ${err.message}`); } finally { busy=false; }
+  if (busy) return; busy=true; $('export').disabled=true; $('export').textContent='書き出し中…';
+  try {
+    const data=await exportSetup({boards:boards.map(b=>b.id===boardId?{...b,pads}:b),boardId,stopFade,master:Number($('master').value)});
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download=`pondashi-all-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('全ボード・音声・設定を書き出しました。別端末でこのファイルを読み込んでください');
+  } catch(err) { toast(`書き出せませんでした: ${err.message}`); }
+  finally { busy=false; $('export').disabled=false; $('export').textContent='全セットアップを書き出し ↗'; }
 };
 $('import').onclick = () => { if (!busy) $('import-file').click(); };
 $('import-file').onchange = async () => {
-  const file = $('import-file').files[0]; if (!file || busy) return;
-  if (!confirm('現在のボタンをバックアップの内容に置き換えますか？')) { $('import-file').value=''; return; }
-  busy = true;
+  const file=$('import-file').files[0];if(!file || busy) return;
+  busy=true; $('import').disabled=true; $('import').textContent='読み込み中…';
   try {
-    const data = JSON.parse(await file.text());
-    if (data.format !== 'pondashi' || data.version !== 1 || !Array.isArray(data.pads) || !data.pads.length || data.pads.length > 200) throw new Error('バックアップの形式が正しくありません');
-    const next = [];
-    for (const p of data.pads) {
-      if (typeof p.name !== 'string' || !['overlap','interrupt','crossfade'].includes(p.mode) || ![p.fadeIn,p.fadeOut].every(n => Number.isFinite(n) && n >= 0 && n <= 60) || !palette.includes(p.color)) throw new Error('設定値が正しくありません');
-      if ((p.volume !== undefined && (!Number.isFinite(p.volume) || p.volume < 0 || p.volume > 1)) || (p.repeat !== undefined && typeof p.repeat !== 'boolean')) throw new Error('音量・リピート設定が正しくありません');
-      if (p.crossfade !== undefined && (!Number.isFinite(p.crossfade) || p.crossfade < 0.1 || p.crossfade > 60)) throw new Error('クロスフェード秒数が正しくありません');
-      let audioFile = null, buffer;
-      if (p.audio) {
-        if (typeof p.audio !== 'string' || !/^data:[^,]*;base64,/.test(p.audio)) throw new Error('音声データが正しくありません');
-        const [header,body] = p.audio.split(','); const bytes = Uint8Array.from(atob(body), c => c.charCodeAt(0));
-        audioFile = new Blob([bytes],{type:header.slice(5).split(';')[0]}); buffer = await decode(audioFile);
-      }
-      next.push({id:crypto.randomUUID(), name:p.name.slice(0,60), fadeIn:p.fadeIn, fadeOut:p.fadeOut, mode:p.mode, crossfade:p.crossfade ?? 2, volume:p.volume ?? 1, repeat:p.repeat ?? false, color:p.color, filename:typeof p.filename === 'string' ? p.filename : '', file:audioFile, buffer});
+    const data=JSON.parse(await file.text());
+    if(data?.format!=='pondashi' || ![1,2].includes(data.version)) throw new Error('バックアップの形式が正しくありません');
+    if(!confirm(data.version===2 ? 'この端末の全ボード・音声・設定をバックアップで置き換えます。今の内容が必要なら先に書き出してください。読み込みますか？' : '旧形式のバックアップです。選択中のボードの音声と設定を置き換えますか？')) return;
+    const setup=await importSetup(data,decode);
+    if(setup.legacy) {
+      const next=setup.boards[0].pads;await persist(next);playRequest++;engine?.stopAll();pads=next;
+    } else {
+      await writeWorkspace(setup);
+      playRequest++;engine?.stopAll();boards=setup.boards;boardId=setup.boardId;stopFade=setup.stopFade;pads=boards.find(b=>b.id===boardId).pads;
+      $('stop-fade').value=stopFade;$('master').value=setup.master;$('volume').textContent=`${Math.round(setup.master*100)}%`;engine?.setVolume(setup.master);
     }
-    await persist(next); stopAll(); pads = next; render(); toast('バックアップを読み込みました');
+    render();toast(setup.legacy?'ボードを読み込みました':'全ボード・音声・設定を復元しました');
   } catch(err) { toast(`読み込めませんでした: ${err.message}`); }
-  finally { busy=false; $('import-file').value=''; }
+  finally { busy=false; $('import').disabled=false; $('import').textContent='セットアップを読み込み'; $('import-file').value=''; }
 };
 window.addEventListener('pagehide', () => { playRequest++; engine?.stopAll(); });
 try {
   db = await openDB(); const saved = await readStored('workspace');
-  if (saved?.boards?.length) { boards = saved.boards; boardId = saved.boardId; stopFade = saved.stopFade ?? 0; }
+  if (saved?.boards?.length) { boards = saved.boards; boardId = saved.boardId; stopFade = saved.stopFade ?? 0; if (Number.isFinite(saved.master)) { $('master').value=saved.master; $('volume').textContent=`${Math.round(Number($('master').value)*100)}%`; } }
   else { boards = [{ id: crypto.randomUUID(), name: 'ボード 1', pads: await readStored('pads') || Array.from({length:12}, (_,i) => freshPad(i)) }]; boardId = boards[0].id; }
   if (!boards.some(b => b.id === boardId)) boardId = boards[0].id;
   pads = boards.find(b => b.id === boardId).pads; $('stop-fade').value = stopFade;
