@@ -65,7 +65,9 @@ export async function importSetup(data,decode,audioFiles=null) {
       let file=null,buffer;
       if(data.version===3 && p.audio!==null && p.audio!==undefined) {
         if(!Number.isInteger(p.audio) || p.audio<0 || p.audio>=audioFiles.length) throw new Error('音声の参照が正しくありません');
-        file=audioFiles[p.audio];buffer=await decode(file);
+        // Preserve the original audio without expanding every track into PCM at import.
+        // The player decodes a track when it is first played.
+        file=audioFiles[p.audio];
       } else if(p.audio!==null && p.audio!==undefined) {
         if(typeof p.audio!=='string' || !/^data:[^,]*;base64,[A-Za-z0-9+/]*={0,2}$/.test(p.audio)) throw new Error('音声データが正しくありません');
         const [header,body]=p.audio.split(',');const bytes=Uint8Array.from(atob(body),c=>c.charCodeAt(0));

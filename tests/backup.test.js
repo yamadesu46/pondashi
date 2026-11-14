@@ -46,3 +46,13 @@ test('binary container retains unique audio once and preserves empty pads',async
  const {data,audioFiles}=await readSetupFile(exportSetupFile(original));
  assert.equal(audioFiles.length,1);assert.equal(data.boards[1].pads[0].audio,0);assert.equal(data.boards[0].pads[1].audio,null);
 });
+
+test('large binary imports preserve audio without decoding every track at once',async()=>{
+ const original=setup();const chunk=new Blob([new Uint8Array(1024*1024)]);
+ original.boards[0].pads[0].file=new Blob(Array(400).fill(chunk),{type:'audio/wav'});
+ const {data,audioFiles}=await readSetupFile(exportSetupFile(original));
+ const result=await importSetup(data,()=>{throw new Error('must decode only during playback');},audioFiles);
+ assert.equal(result.boards[0].pads[0].file.size,400*1024*1024);
+ assert.equal(result.boards[0].pads[0].buffer,undefined);
+ assert.equal(result.boards[1].name,'BGM');
+});

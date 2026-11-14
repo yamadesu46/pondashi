@@ -1,5 +1,5 @@
 import { AudioEngine } from './audio-engine.js?v=6';
-import { exportSetupFile, readSetupFile, importSetup } from './backup.js?v=9';
+import { exportSetupFile, readSetupFile, importSetup } from './backup.js?v=10';
 const $ = (id) => document.getElementById(id);
 const palette = ['#b8ee83', '#8fc8f4', '#e4b3ed', '#f0c680', '#8ed9c9', '#ef9eac'];
 const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', crossfade: 2, volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
