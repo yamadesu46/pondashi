@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {exportSetup,importSetup} from '../backup.js';
+import {exportSetup,importSetup,exportSetupFile,readSetupFile} from '../backup.js';
 const pad=(id,file=null)=>({id,name:'拍手',fadeIn:1,fadeOut:2,mode:'crossfade',crossfade:3,volume:0.35,repeat:true,color:'#b8ee83',filename:'拍手.wav',file,buffer:{decoded:true}});
 const setup=()=>({boards:[{id:'one',name:'イベント',pads:[pad('a',new Blob(['sound'],{type:'audio/wav'})),pad('b')]},{id:'two',name:'BGM',pads:[pad('c')]}],boardId:'two',master:0.45,stopFade:4});
 test('all boards, audio bytes, pad order and all settings survive a round trip',async()=>{
@@ -26,4 +26,23 @@ test('a later corrupt audio file fails the import and leaves the input unchanged
  const before=JSON.stringify(data);let calls=0;
  await assert.rejects(importSetup(data,async()=>{if(++calls===2)throw new Error('corrupt');return {};}),/corrupt/);
  assert.equal(JSON.stringify(data),before);assert.equal(calls,2);
+});
+
+test('binary backup copies raw blobs without reading or base64-encoding the audio',async()=>{
+ const original=setup();const file=original.boards[0].pads[0].file;
+ file.arrayBuffer=()=>{throw new Error('must not read whole audio');};
+ const packed=exportSetupFile(original);const {data,audioFiles}=await readSetupFile(packed);
+ assert.equal(data.version,3);assert.equal(data.boards[0].pads[0].audio,0);
+ const restored=await importSetup(data,async f=>({decoded:await f.text()}),audioFiles);
+ assert.equal(await restored.boards[0].pads[0].file.text(),'sound');assert.equal(restored.master,0.45);assert.equal(restored.boards[1].name,'BGM');
+});
+test('binary backup rejects truncated audio and invalid references',async()=>{
+ const packed=exportSetupFile(setup());await assert.rejects(readSetupFile(packed.slice(0,packed.size-1)),/音声/);
+ const {data,audioFiles}=await readSetupFile(packed);data.boards[0].pads[0].audio=999;
+ await assert.rejects(importSetup(data,()=>{},audioFiles),/参照/);
+});
+test('binary container retains unique audio once and preserves empty pads',async()=>{
+ const original=setup();original.boards[1].pads[0].file=original.boards[0].pads[0].file;
+ const {data,audioFiles}=await readSetupFile(exportSetupFile(original));
+ assert.equal(audioFiles.length,1);assert.equal(data.boards[1].pads[0].audio,0);assert.equal(data.boards[0].pads[1].audio,null);
 });

@@ -1,5 +1,5 @@
 import { AudioEngine } from './audio-engine.js?v=6';
-import { exportSetup, importSetup } from './backup.js?v=8';
+import { exportSetupFile, readSetupFile, importSetup } from './backup.js?v=9';
 const $ = (id) => document.getElementById(id);
 const palette = ['#b8ee83', '#8fc8f4', '#e4b3ed', '#f0c680', '#8ed9c9', '#ef9eac'];
 const freshPad = (i) => ({ id: crypto.randomUUID(), name: `サウンド ${String(i + 1).padStart(2, '0')}`, fadeIn: 0, fadeOut: 0, mode: 'overlap', crossfade: 2, volume: 1, repeat: false, color: palette[i % palette.length], file: null, filename: '' });
@@ -277,14 +277,19 @@ for (const event of ['dragover','dragleave','drop']) $('pads').addEventListener(
   catch(err) { toast(`セットできませんでした: ${err.message}`); } finally { busy = false; }
 });
 $('help').onclick = () => $('help-dialog').showModal(); $('close-help').onclick = () => $('help-dialog').close();
+let backupDownloadURL;
+function backupStatus(message,error=false) { $('backup-status').textContent=message; $('backup-status').classList.toggle('error',error); }
 $('export').onclick = async () => {
   if (busy) return; busy=true; $('export').disabled=true; $('export').textContent='書き出し中…';
+  backupStatus('音声と全ボードをまとめています…');
   try {
-    const data=await exportSetup({boards:boards.map(b=>b.id===boardId?{...b,pads}:b),boardId,stopFade,master:Number($('master').value)});
-    const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
-    const a=document.createElement('a');a.href=url;a.download=`pondashi-all-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const data=exportSetupFile({boards:boards.map(b=>b.id===boardId?{...b,pads}:b),boardId,stopFade,master:Number($('master').value)});
+    const url=URL.createObjectURL(data);
+    if(backupDownloadURL) URL.revokeObjectURL(backupDownloadURL);backupDownloadURL=url;
+    const a=$('download-backup');a.href=url;a.download=`pondashi-all-${new Date().toISOString().slice(0,10)}.pondashi`;a.hidden=false;a.click();
+    backupStatus(`保存用ファイルを作成しました（${(data.size/1024/1024).toFixed(1)}MB）。ダウンロードが始まらない場合は「保存用ファイルをダウンロード」を押してください。`);
     toast('全ボード・音声・設定を書き出しました。別端末でこのファイルを読み込んでください');
-  } catch(err) { toast(`書き出せませんでした: ${err.message}`); }
+  } catch(err) { backupStatus(`書き出せませんでした: ${err.message}`,true); toast(`書き出せませんでした: ${err.message}`); }
   finally { busy=false; $('export').disabled=false; $('export').textContent='全セットアップを書き出し ↗'; }
 };
 $('import').onclick = () => { if (!busy) $('import-file').click(); };
@@ -292,10 +297,11 @@ $('import-file').onchange = async () => {
   const file=$('import-file').files[0];if(!file || busy) return;
   busy=true; $('import').disabled=true; $('import').textContent='読み込み中…';
   try {
-    const data=JSON.parse(await file.text());
-    if(data?.format!=='pondashi' || ![1,2].includes(data.version)) throw new Error('バックアップの形式が正しくありません');
-    if(!confirm(data.version===2 ? 'この端末の全ボード・音声・設定をバックアップで置き換えます。今の内容が必要なら先に書き出してください。読み込みますか？' : '旧形式のバックアップです。選択中のボードの音声と設定を置き換えますか？')) return;
-    const setup=await importSetup(data,decode);
+    backupStatus('バックアップを読み込んでいます…');
+    const {data,audioFiles}=await readSetupFile(file);
+    if(data?.format!=='pondashi' || ![1,2,3].includes(data.version)) throw new Error('バックアップの形式が正しくありません');
+    if(!confirm(data.version!==1 ? 'この端末の全ボード・音声・設定をバックアップで置き換えます。今の内容が必要なら先に書き出してください。読み込みますか？' : '旧形式のバックアップです。選択中のボードの音声と設定を置き換えますか？')) { backupStatus('読み込みをキャンセルしました'); return; }
+    const setup=await importSetup(data,decode,audioFiles);
     if(setup.legacy) {
       const next=setup.boards[0].pads;await persist(next);playRequest++;engine?.stopAll();pads=next;
     } else {
@@ -303,8 +309,9 @@ $('import-file').onchange = async () => {
       playRequest++;engine?.stopAll();boards=setup.boards;boardId=setup.boardId;stopFade=setup.stopFade;pads=boards.find(b=>b.id===boardId).pads;
       $('stop-fade').value=stopFade;$('master').value=setup.master;$('volume').textContent=`${Math.round(setup.master*100)}%`;engine?.setVolume(setup.master);
     }
+    backupStatus(setup.legacy?'ボードを読み込みました':'全ボード・音声・設定を復元しました');
     render();toast(setup.legacy?'ボードを読み込みました':'全ボード・音声・設定を復元しました');
-  } catch(err) { toast(`読み込めませんでした: ${err.message}`); }
+  } catch(err) { backupStatus(`読み込めませんでした: ${err.message}`,true); toast(`読み込めませんでした: ${err.message}`); }
   finally { busy=false; $('import').disabled=false; $('import').textContent='セットアップを読み込み'; $('import-file').value=''; }
 };
 window.addEventListener('pagehide', () => { playRequest++; engine?.stopAll(); });
